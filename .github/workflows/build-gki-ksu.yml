@@ -1,0 +1,176 @@
+name: Build Android GKI Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      preset:
+        description: "预设配置档位"
+        type: choice
+        options:
+          - minimal
+          - balanced
+          - ksun-full
+        default: balanced
+
+      enable_ksu:
+        description: "启用 KernelSU-Next"
+        type: boolean
+        default: true
+
+      enable_susfs:
+        description: "启用 SUSFS (requires KSU)"
+        type: boolean
+        default: true
+
+      enable_lxc:
+        description: "启用 LXC (requires KSU)"
+        type: boolean
+        default: true
+
+      enable_bbr:
+        description: "启用 TCP BBR"
+        type: boolean
+        default: true
+
+      disable_avb:
+        description: "禁用 AVB 2.0 验证"
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            git bc bison flex libssl-dev libelf-dev \
+            python3 curl zip unzip lz4 cpio rsync
+
+      - name: Resolve Preset
+        id: preset
+        run: |
+          PRESET="${{ github.event.inputs.preset }}"
+
+          echo "preset=$PRESET" >> $GITHUB_OUTPUT
+          echo "enable_ksu=${{ github.event.inputs.enable_ksu }}" >> $GITHUB_OUTPUT
+          echo "enable_susfs=${{ github.event.inputs.enable_susfs }}" >> $GITHUB_OUTPUT
+          echo "enable_lxc=${{ github.event.inputs.enable_lxc }}" >> $GITHUB_OUTPUT
+          echo "enable_bbr=${{ github.event.inputs.enable_bbr }}" >> $GITHUB_OUTPUT
+          echo "disable_avb=${{ github.event.inputs.disable_avb }}" >> $GITHUB_OUTPUT
+
+          if [ "$PRESET" = "minimal" ]; then
+            echo "enable_ksu=false" >> $GITHUB_OUTPUT
+            echo "enable_susfs=false" >> $GITHUB_OUTPUT
+            echo "enable_lxc=false" >> $GITHUB_OUTPUT
+          fi
+
+          if [ "$PRESET" = "ksun-full" ]; then
+            echo "enable_ksu=true" >> $GITHUB_OUTPUT
+            echo "enable_susfs=true" >> $GITHUB_OUTPUT
+            echo "enable_lxc=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Dependency Sanity Check
+        run: |
+          if [ "${{ steps.preset.outputs.enable_susfs }}" = "true" ] && \
+             [ "${{ steps.preset.outputs.enable_ksu }}" != "true" ]; then
+            echo "::error::SUSFS requires KernelSU"
+            exit 1
+          fi
+
+      - name: Clone Google GKI
+        run: |
+          git clone https://android.googlesource.com/kernel/common gki
+          cd gki
+          git checkout android13-5.15-lts
+
+      - name: Apply KernelSU-Next
+        if: ${{ steps.preset.outputs.enable_ksu == 'true' }}
+        run: |
+          cd gki
+          git clone https://github.com/KernelSU-Next/KernelSU.git KernelSU
+          bash KernelSU/kernel/setup.sh
+
+      - name: Apply SUSFS (GitLab)
+        if: ${{ steps.preset.outputs.enable_susfs == 'true' }}
+        run: |
+          cd gki
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git susfs
+          bash susfs/install.sh .
+
+      - name: Enable LXC
+        if: ${{ steps.preset.outputs.enable_lxc == 'true' }}
+        run: |
+          cd gki
+          scripts/config --enable CONFIG_NAMESPACES
+          scripts/config --enable CONFIG_CGROUPS
+          scripts/config --enable CONFIG_VETH
+          scripts/config --enable CONFIG_BRIDGE
+
+      - name: Enable BBR & Enhancements
+        run: |
+          cd gki
+          if [ "${{ steps.preset.outputs.enable_bbr }}" = "true" ]; then
+            scripts/config --enable CONFIG_TCP_CONG_BBR
+            scripts/config --set-str CONFIG_DEFAULT_TCP_CONG bbr
+          fi
+
+          scripts/config --enable CONFIG_BPF
+          scripts/config --enable CONFIG_BPF_SYSCALL
+          scripts/config --enable CONFIG_NTFS3_FS
+
+          make olddefconfig
+
+      - name: Build Kernel
+        run: |
+          cd gki
+          make -j$(nproc)
+
+      - name: Package Output
+        id: pack
+        run: |
+          mkdir out
+          if [ "${{ steps.preset.outputs.enable_ksu }}" = "true" ]; then
+            git clone https://github.com/osm0sis/AnyKernel3.git ak3
+            cp gki/arch/arm64/boot/Image ak3/
+            ZIP_NAME="GKI-${{ steps.preset.outputs.preset }}-KSU.zip"
+            zip -r out/$ZIP_NAME ak3
+            echo "artifact=$ZIP_NAME" >> $GITHUB_OUTPUT
+          else
+            cp gki/out/*/*.img out/
+            echo "artifact=raw-imgs" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: gki-${{ github.run_number }}
+          name: >
+            GKI Kernel |
+            preset=${{ steps.preset.outputs.preset }} |
+            KSU=${{ steps.preset.outputs.enable_ksu }} |
+            SUSFS=${{ steps.preset.outputs.enable_susfs }} |
+            LXC=${{ steps.preset.outputs.enable_lxc }}
+          body: |
+            ### Android GKI Kernel Build
+
+            **Preset:** ${{ steps.preset.outputs.preset }}
+
+            **Features**
+            - KernelSU-Next: ${{ steps.preset.outputs.enable_ksu }}
+            - SUSFS: ${{ steps.preset.outputs.enable_susfs }}
+            - LXC: ${{ steps.preset.outputs.enable_lxc }}
+            - TCP BBR: ${{ steps.preset.outputs.enable_bbr }}
+            - AVB Disabled: ${{ steps.preset.outputs.disable_avb }}
+
+            **Output**
+            - KSU enabled → AnyKernel3 flashable zip
+            - No KSU → raw `.img` files (anti-brick)
+
+            Built by GitHub Actions.
+          files: out/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
