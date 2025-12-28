@@ -132,16 +132,26 @@ jobs:
       - name: Package Output
         id: pack
         run: |
-          mkdir out
+          mkdir -p out
+
           if [ "${{ steps.preset.outputs.enable_ksu }}" = "true" ]; then
+            echo "Packaging AnyKernel3 (KSU enabled)"
+
             git clone https://github.com/osm0sis/AnyKernel3.git ak3
             cp gki/arch/arm64/boot/Image ak3/
+
             ZIP_NAME="GKI-${{ steps.preset.outputs.preset }}-KSU.zip"
             zip -r out/$ZIP_NAME ak3
             echo "artifact=$ZIP_NAME" >> $GITHUB_OUTPUT
+
           else
-            cp gki/out/*/*.img out/
-            echo "artifact=raw-imgs" >> $GITHUB_OUTPUT
+            echo "Packaging raw kernel images (anti-brick)"
+
+            cp gki/arch/arm64/boot/Image out/
+            [ -f gki/arch/arm64/boot/Image.gz ] && cp gki/arch/arm64/boot/Image.gz out/
+            [ -f gki/arch/arm64/boot/Image.gz-dtb ] && cp gki/arch/arm64/boot/Image.gz-dtb out/
+
+            echo "artifact=raw-kernel-images" >> $GITHUB_OUTPUT
           fi
 
       - name: Create GitHub Release
