@@ -22,8 +22,8 @@ jobs:
 
       - name: Setup AOSP Clang
         run: |
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/${{ env.CLANG_VERSION }}/clang.tar.gz
-          tar -xzf clang.tar.gz
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-3289846.tar.gz
+          tar -xzf clang-3289846.tar.gz
           export CLANG_PATH=$(pwd)/clang/bin
 
       - name: Setup ReSukiSU
