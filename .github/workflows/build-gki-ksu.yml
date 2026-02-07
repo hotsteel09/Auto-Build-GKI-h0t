@@ -7,7 +7,7 @@ env:
   KERNEL_REPO: "https://github.com/OnePlusOSS/android_kernel_oneplus_sm8250.git"
   KERNEL_BRANCH: "oneplus/SM8250_R_11.0"
   DEFCONFIG: "arch/arm64/configs/gki_defconfig" # 一加8 GKI内核配置
-  CLANG_VERSION: "r416183b" # AOSP Clang for Android 12
+  CLANG_VERSION: "3289846" # AOSP Clang for Android 12
 
 jobs:
   build:
